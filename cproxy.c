@@ -54,7 +54,7 @@ int create_server_socket(int protocol, char* hostname, int port) {
 
 	// if protocol is TCP
 	if (protocol != IPPROTO_UDP) {
-		// listen
+		// listen()
 		printf("Listen ... ");
 		int backlog = 1;
 		if (listen(socket_fd, backlog) < 0) {
@@ -125,7 +125,7 @@ int main(int argc, char* argv[]) {
 
 	// check input data
 	if (argc < 4) {
-		printf("use: cproxy [-u] <host> <port> <host> <port>\n");
+		printf("usage: cproxy [-u] <host> <port> <host> <port>\n");
 		return -1;
 	}
 
@@ -154,30 +154,40 @@ int main(int argc, char* argv[]) {
 
 	// create proxy
 	int socket_fd_server = create_server_socket(protocol, hostname_from, port_from);
+	if (socket_fd_server < 0) {
+		return -1;
+	}
 	printf("\n");
+
 	int socket_fd_client = create_client_socket(protocol, hostname_to, port_to);
-	if (socket_fd_server < 0 || socket_fd_client < 0) {
+	if (socket_fd_client < 0) {
 		return -1;
 	}
 
+	// fetch remote socket
+	int socket_fd_remote;
 	if (protocol == IPPROTO_TCP) {
-		// accept
+		// TCP - from accept()
 		struct sockaddr addr_remote;
 		memset(&addr_remote, 0x00, sizeof(struct sockaddr));
 		socklen_t addr_remote_len;
 		printf("Accept waiting ... ");
-		int socket_fd_remote = accept(socket_fd_server, (struct sockaddr*) &addr_remote, &addr_remote_len);
+		socket_fd_remote = accept(socket_fd_server, (struct sockaddr*) &addr_remote, &addr_remote_len);
 		if (socket_fd_remote < 0) {
 			perror("Error");
 			return -1;
 		} else {
 			printf("OK\n");
 		}
+
+	} else {
+		// UDP
+		socket_fd_remote = socket_fd_server;
 	}
 
 	char buf[BUFSIZ];
 	int count;
-	while ((count = read(socket_fd_server, buf, BUFSIZ)) > 0) {
+	while ((count = read(socket_fd_remote, buf, BUFSIZ)) > 0) {
 		write(socket_fd_client, buf, count);
 		write(1, buf, count);
 	}
