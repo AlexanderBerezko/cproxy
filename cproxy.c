@@ -56,7 +56,7 @@ int create_server_socket(int protocol, char* hostname, int port) {
 	if (protocol != IPPROTO_UDP) {
 		// listen()
 		printf("Listen ... ");
-		int backlog = 1;
+		int backlog = 0;
 		if (listen(socket_fd, backlog) < 0) {
 			perror("Error");
 			return -4;
@@ -185,11 +185,50 @@ int main(int argc, char* argv[]) {
 		socket_fd_remote = socket_fd_server;
 	}
 
+	// exchange data
+	int select_res = 0;
+	int nfds = socket_fd_remote + 1;
+
+	fd_set readfds;
+	FD_ZERO(&readfds);
+	FD_SET(socket_fd_remote, &readfds);
+	FD_SET(socket_fd_client, &readfds);
+
 	char buf[BUFSIZ];
 	int count;
-	while ((count = read(socket_fd_remote, buf, BUFSIZ)) > 0) {
-		write(socket_fd_client, buf, count);
-		write(1, buf, count);
+	while ((select_res = select(nfds, &readfds, NULL, NULL, NULL)) != 0) {
+		if (select_res < 0) {
+			perror("Select error");
+			break;
+		}
+
+		if (FD_ISSET(socket_fd_remote, &readfds)) {
+			count = read(socket_fd_remote, buf, BUFSIZ);
+			if (count <= 0) {
+				break;
+			}
+
+			write(socket_fd_client, buf, count);
+			printf(">> ");
+			write(1, buf, count);
+
+		} else {
+			FD_SET(socket_fd_remote, &readfds);
+		}
+		
+		if (FD_ISSET(socket_fd_client, &readfds)) {
+			count = read(socket_fd_client, buf, BUFSIZ);
+			if (count <= 0) {
+				break;
+			}
+
+			write(socket_fd_remote, buf, count);
+			printf("<< ");
+			write(1, buf, count);
+
+		} else {
+			FD_SET(socket_fd_client, &readfds);
+		}
 	}
 
 	return 0;
