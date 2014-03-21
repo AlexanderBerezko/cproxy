@@ -121,6 +121,133 @@ int create_client_socket(int protocol, char* hostname, int port) {
 }
 
 
+/* Create TCP proxy */
+int create_tcp_proxy(int socket_fd_server, int socket_fd_client) {
+
+	// fetch remote socket from accept()
+	struct sockaddr_in addr_remote;
+	memset(&addr_remote, 0x00, sizeof(struct sockaddr));
+	socklen_t addr_remote_len;
+	printf("Accept waiting ... ");
+	int socket_fd_remote = accept(socket_fd_server, (struct sockaddr*) &addr_remote, &addr_remote_len);
+	if (socket_fd_remote < 0) {
+		perror("Error");
+		return -1;
+	} else {
+		printf("accept from %d\n", ntohs(addr_remote.sin_port));
+	}
+
+	// exchange data
+	int select_res = 0;
+	int nfds = socket_fd_remote + 1;
+
+	fd_set readfds;
+	FD_ZERO(&readfds);
+	FD_SET(socket_fd_remote, &readfds);
+	FD_SET(socket_fd_client, &readfds);
+
+	int count;
+	char buf[BUFSIZ];
+	while ((select_res = select(nfds, &readfds, NULL, NULL, NULL)) != 0) {
+		if (select_res < 0) {
+			perror("Select error");
+			return -1;
+		}
+
+		// >>>
+		if (FD_ISSET(socket_fd_remote, &readfds)) {
+			count = read(socket_fd_remote, buf, BUFSIZ);
+			if (count <= 0) {
+				break;
+			}
+
+			write(socket_fd_client, buf, count);
+			printf(">> ");
+			write(1, buf, count);
+
+		} else {
+			FD_SET(socket_fd_remote, &readfds);
+		}
+		
+		// <<<
+		if (FD_ISSET(socket_fd_client, &readfds)) {
+			count = read(socket_fd_client, buf, BUFSIZ);
+			if (count <= 0) {
+				break;
+			}
+
+			write(socket_fd_remote, buf, count);
+			printf("<< ");
+			write(1, buf, count);
+
+		} else {
+			FD_SET(socket_fd_client, &readfds);
+		}
+	}
+
+	return 0;
+}
+
+
+/* Create UDP proxy */
+int create_udp_proxy(int socket_fd_server, int socket_fd_client) {
+
+	int select_res = 0;
+	int nfds = socket_fd_client + 1;
+
+	fd_set readfds;
+	FD_ZERO(&readfds);
+	FD_SET(socket_fd_server, &readfds);
+	FD_SET(socket_fd_client, &readfds);
+
+	int count;
+	char buf[BUFSIZ];
+
+	struct sockaddr_in addr_remote;
+	memset(&addr_remote, 0x00, sizeof(struct sockaddr));
+	socklen_t addr_remote_len;
+
+	while ((select_res = select(nfds, &readfds, NULL, NULL, NULL)) != 0) {
+		if (select_res < 0) {
+			perror("Select error");
+			return -1;
+		}
+
+		// >>>
+		if (FD_ISSET(socket_fd_server, &readfds)) {
+			count = recvfrom(socket_fd_server, buf, BUFSIZ, 0, (struct sockaddr*) &addr_remote, &addr_remote_len);
+			if (count <= 0) {
+				break;
+			}
+
+			write(socket_fd_client, buf, count);
+			printf(">> ");
+			write(1, buf, count);
+
+		} else {
+			FD_SET(socket_fd_server, &readfds);
+		}
+		
+		// <<<
+		if (FD_ISSET(socket_fd_client, &readfds)) {
+			count = read(socket_fd_client, buf, BUFSIZ);
+			if (count <= 0) {
+				break;
+			}
+
+			sendto(socket_fd_server, buf, count, 0, (struct sockaddr*) &addr_remote, addr_remote_len);
+			printf("<< ");
+			write(1, buf, count);
+
+		} else {
+			FD_SET(socket_fd_client, &readfds);
+		}
+	}
+
+	return 0;
+}
+
+
 int main(int argc, char* argv[]) {
 
 	// check input data
@@ -152,7 +279,7 @@ int main(int argc, char* argv[]) {
 	// not buffering stdout
 	setbuf(stdout, NULL);
 
-	// create proxy
+	// create sockets
 	int socket_fd_server = create_server_socket(protocol, hostname_from, port_from);
 	if (socket_fd_server < 0) {
 		return -1;
@@ -164,70 +291,15 @@ int main(int argc, char* argv[]) {
 		return -1;
 	}
 
-	// fetch remote socket
-	int socket_fd_remote;
+	// create proxy
 	if (protocol == IPPROTO_TCP) {
-		// TCP - from accept()
-		struct sockaddr addr_remote;
-		memset(&addr_remote, 0x00, sizeof(struct sockaddr));
-		socklen_t addr_remote_len;
-		printf("Accept waiting ... ");
-		socket_fd_remote = accept(socket_fd_server, (struct sockaddr*) &addr_remote, &addr_remote_len);
-		if (socket_fd_remote < 0) {
-			perror("Error");
+		if (create_tcp_proxy(socket_fd_server, socket_fd_client) < 0) {
 			return -1;
-		} else {
-			printf("OK\n");
 		}
 
 	} else {
-		// UDP
-		socket_fd_remote = socket_fd_server;
-	}
-
-	// exchange data
-	int select_res = 0;
-	int nfds = socket_fd_remote + 1;
-
-	fd_set readfds;
-	FD_ZERO(&readfds);
-	FD_SET(socket_fd_remote, &readfds);
-	FD_SET(socket_fd_client, &readfds);
-
-	char buf[BUFSIZ];
-	int count;
-	while ((select_res = select(nfds, &readfds, NULL, NULL, NULL)) != 0) {
-		if (select_res < 0) {
-			perror("Select error");
-			break;
-		}
-
-		if (FD_ISSET(socket_fd_remote, &readfds)) {
-			count = read(socket_fd_remote, buf, BUFSIZ);
-			if (count <= 0) {
-				break;
-			}
-
-			write(socket_fd_client, buf, count);
-			printf(">> ");
-			write(1, buf, count);
-
-		} else {
-			FD_SET(socket_fd_remote, &readfds);
-		}
-		
-		if (FD_ISSET(socket_fd_client, &readfds)) {
-			count = read(socket_fd_client, buf, BUFSIZ);
-			if (count <= 0) {
-				break;
-			}
-
-			write(socket_fd_remote, buf, count);
-			printf("<< ");
-			write(1, buf, count);
-
-		} else {
-			FD_SET(socket_fd_client, &readfds);
+		if (create_udp_proxy(socket_fd_server, socket_fd_client) < 0) {
+			return -1;
 		}
 	}
 
