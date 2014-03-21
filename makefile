@@ -8,4 +8,4 @@ $(target): $(target).c
 	$(cc) $(target).c -o $(target)
 
 clean:
-	rm $(obj1).o $(target)
+	rm $(target)
